@@ -18,7 +18,7 @@ app.post('/', async (req, res) => {
             return res.status(400).send('pfx_password is required');
         }
 
-        const response = await axios.post('https://leomarz.pythonanywhere.com/', {
+        const response = await axios.post('https://leomarz.pythonanywhere.com/sign', {
             pfx_file_url,
             pfx_password
         });
