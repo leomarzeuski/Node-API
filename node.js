@@ -27,7 +27,7 @@ app.post('/', async (req, res) => {
 
         const params = {
             Body: JSON.stringify(signature),
-            Bucket: "cyclic-weak-pear-pig-tux-sa-east-1",
+            Bucket: "cyclic-pleasant-erin-coveralls-sa-east-1",
             Key: `signatures/${signature.id}.json`,
         };
 
