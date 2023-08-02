@@ -5,7 +5,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const AWS = require('aws-sdk');
 
 const s3 = new AWS.S3();
-const bucketName = 'cyclic-weak-pear-pig-tux-sa-east-1';
+const bucketName = 'cyclic-pleasant-erin-coveralls-sa-east-1';
 
 const app = express();
 app.use(express.json());
