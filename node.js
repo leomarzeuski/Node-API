@@ -2,107 +2,90 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const AWS = require('aws-sdk');
-const forge = require('node-forge');
+const pem = require('pem');
 const signpdf = require('node-signpdf').default;
 const { readFileSync } = require('fs');
 const { addSignaturePlaceholder } = require('node-signpdf/dist/helpers');
 
 const s3 = new AWS.S3();
-const bucketName = 'cyclic-pleasant-erin-coveralls-sa-east-1';
+const bucketName = 'cyclic-weak-pear-pig-tux-sa-east-1';
 
 const app = express();
-
 app.use(express.json());
 
 app.post('/', async (req, res) => {
   try {
-    const pfxFileUrl = req.body.pfx_file_url;
-    const pfxPassword = req.body.pfx_password;
+    const { pfxFileUrl, pfxPassword } = req.body;
 
-    if (!pfxFileUrl) {
-      return res.status(400).send('pfx_file_url is required');
+    if (!pfxFileUrl || !pfxPassword) {
+      return res.status(400).send('pfx_file_url and pfx_password are required');
     }
 
-    if (!pfxPassword) {
-      return res.status(400).send('pfx_password is required');
-    }
+    const currentDateTime = new Date().toISOString().replace(/[:.-]/g, '');
+    const localFile = `/tmp/pfx_${currentDateTime}`;
+    const localFilename = `${localFile}.pfx`;
+    const outputFile = `${localFile}.pdf`;
 
-    const localFile = `/tmp/pfx_${Date.now()}`;
+    await downloadFile(pfxFileUrl, localFilename);
 
-    const localFilename = await transformPfxInPdf(pfxFileUrl, localFile);
+    pem.createCertificate({ selfSigned: true }, (err, keys) => {
+      if (err) {
+        throw err;
+      }
 
-    const outputFilename = `${localFile}.pdf`;
+      const pdfBuffer = Buffer.from(fs.readFileSync(localFilename));
+      const pdfToSign = addSignaturePlaceholder({
+        pdfBuffer,
+        reason: 'I am the author',
+        contactInfo: 'julien@jookies.net',
+        name: 'Julien Valentin',
+        location: 'France',
+      });
 
-    const signature = await generateKeyAndSign(localFilename, pfxPassword, outputFilename);
+      const signerOptions = {
+        x: 0,
+        y: 0,
+        size: 10,
+        pageNumber: 0,
+        contactInfo: 'julien@jookies.net',
+        location: 'France',
+        password: pfxPassword,
+        name: 'Julien Valentin',
+        reason: 'I am the author',
+      };
 
-    return res.status(200).json({ message: 'Signature generated successfully!', signature });
-  } catch (e) {
-    console.error(`Error: ${e}`);
-    return res.status(500).send(e.toString());
+      const signedPdf = signpdf.sign(pdfToSign, keys.clientKey, signerOptions);
+      fs.writeFileSync(outputFile, signedPdf);
+
+      const params = {
+        Bucket: bucketName,
+        Key: outputFile,
+        Body: fs.createReadStream(outputFile),
+      };
+
+      s3.upload(params, function (err, data) {
+        if (err) {
+          throw err;
+        }
+        console.log(`File uploaded successfully. ${data.Location}`);
+      });
+
+      res.json({ message: 'Signature generated successfully!', signature: keys.certificate });
+    });
+  } catch (error) {
+    console.error(`Error: ${error}`);
+    res.status(500).send(error.message);
   }
 });
 
-async function transformPfxInPdf(pfxFileUrl, localFile) {
-  const localFilename = `${localFile}.pfx`;
-  await downloadFile(pfxFileUrl, localFilename);
-  return localFilename;
-}
-
 async function downloadFile(url, localFilename) {
-  const response = await axios.get(url, { responseType: 'arraybuffer' });
-  await s3.putObject({ Body: response.data, Bucket: bucketName, Key: localFilename }).promise();
-}
-
-async function loadCertificateAndKey(pfxPath, password) {
-  const pfxFile = await s3.getObject({ Bucket: bucketName, Key: pfxPath }).promise();
-  const pfxDer = forge.util.decode64(pfxFile.Body.toString('base64'));
-  const pfxAsn1 = forge.asn1.fromDer(pfxDer);
-  const pfxObj = forge.pkcs12.pkcs12FromAsn1(pfxAsn1, false, password);
-
-  const keyBags = pfxObj.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag }).friendlyName;
-  const certBags = pfxObj.getBags({ bagType: forge.pki.oids.certBag }).friendlyName;
-
-  if (!keyBags || !certBags) {
-    throw new Error('Failed to get key or certificate bags');
-  }
-
-  const keyObj = keyBags[0];
-  const certObj = certBags[0];
-
-  return { key: forge.pki.privateKeyToPem(keyObj.key), cert: forge.pki.certificateToPem(certObj.cert) };
-}
-
-async function generateKeyAndSign(pfxPath, password, outputFilename) {
-  const { key, cert } = await loadCertificateAndKey(pfxPath, password);
-
-  const pdfBuffer = Buffer.from('<pdf content>', 'base64');
-  const pdfToSign = addSignaturePlaceholder({
-    pdfBuffer,
-    reason: 'I am the author',
-    contactInfo: 'julien@jookies.net',
-    name: 'Julien TA',
-    location: 'France',
+  const response = await axios.get(url, { responseType: 'stream' });
+  const writeStream = fs.createWriteStream(localFilename);
+  response.data.pipe(writeStream);
+  return new Promise((resolve, reject) => {
+    writeStream.on('finish', resolve);
+    writeStream.on('error', reject);
   });
-
-  const signer = signpdf.createSigner({
-    key: readFileSync(key),
-    cert: readFileSync(cert),
-  });
-
-  const signedPdf = signer.sign(pdfToSign, Buffer.from(key));
-
-  await s3.putObject({ Body: signedPdf, Bucket: bucketName, Key: outputFilename }).promise();
-
-  const signature = {
-    id: cert.serialNumber,
-    'name/cpf': cert.subject.getField('CN').value,
-    type: cert.subject.getField('OU').value,
-    bir: cert.subject.getField('O').value,
-    address: cert.subject.getField('L').value,
-    signature_text: cert.subject.getField('ST').value,
-  };
-
-  return signature;
 }
 
 app.listen(3000, () => {
