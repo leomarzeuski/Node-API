@@ -8,7 +8,7 @@ const { readFileSync } = require('fs');
 const { addSignaturePlaceholder } = require('node-signpdf/dist/helpers');
 
 const s3 = new AWS.S3();
-const bucketName = 'cyclic-weak-pear-pig-tux-sa-east-1';
+const bucketName = 'cyclic-pleasant-erin-coveralls-sa-east-1';
 
 const app = express();
 
